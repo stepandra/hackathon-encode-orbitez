@@ -1,4 +1,5 @@
 import * as errors from '../infra/errors';
+import axios from 'axios';
 
 export interface DigitalOceanDropletSpecification {
   installCommand: string;
@@ -96,6 +97,7 @@ export class RestApiSession implements DigitalOceanSession {
     // Register a key with DigitalOcean, so the user will not get a potentially
     // confusing email with their droplet password, which could get mistaken for
     // an invite.
+    console.log("PUBLICK KEY", publicKeyForSSH)
     return this.registerKey_(dropletName, publicKeyForSSH).then((keyId: number) => {
       return this.makeCreateDropletRequest(dropletName, region, keyId, dropletSpec);
     });
@@ -196,43 +198,39 @@ export class RestApiSession implements DigitalOceanSession {
   // Makes an XHR request to DigitalOcean's API, returns a promise which fulfills
   // with the parsed object if successful.
   private request<T>(method: string, actionPath: string, data?: {}): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open(method, `https://api.digitalocean.com/v2/${actionPath}`);
-      xhr.setRequestHeader('Authorization', `Bearer ${this.accessToken}`);
-      xhr.setRequestHeader('Content-Type', 'application/json');
-      xhr.onload = () => {
-        // DigitalOcean may return any 2xx status code for success.
-        if (xhr.status >= 200 && xhr.status <= 299) {
-          // Parse JSON response if available.  For requests like DELETE
-          // this.response may be empty.
-          const responseObj = xhr.response ? JSON.parse(xhr.response) : {};
-          resolve(responseObj);
-        } else if (xhr.status === 401) {
-          console.error('DigitalOcean request failed with Unauthorized error');
-          reject(new XhrError());
-        } else {
-          // this.response is a JSON object, whose message is an error string.
-          const responseJson = JSON.parse(xhr.response);
-          console.error(`DigitalOcean request failed with status ${xhr.status}`);
-          reject(
-            new Error(`XHR ${responseJson.id} failed with ${xhr.status}: ${responseJson.message}`)
-          );
+    return new Promise<T>(async (resolve, reject) => {
+      const url = `https://api.digitalocean.com/v2/${actionPath}`;
+      try {
+        let response = await axios({
+          method,
+          url,
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          data
+        })
+
+        if (response.status >= 200 && response.status <= 299) {
+            // Parse JSON response if available.  For requests like DELETE
+            // this.response may be empty.
+            console.log(response.data)
+            const responseObj = response.data ? response.data : {};
+            resolve(responseObj);
+          } else if (response.status === 401) {
+            console.error('DigitalOcean request failed with Unauthorized error');
+            reject(new XhrError());
+          } else {
+            // this.response is a JSON object, whose message is an error string.
+            const responseJson = response.data;
+            console.error(`DigitalOcean request failed with status ${response.status}`);
+            reject(
+              new Error(`XHR ${responseJson.id} failed with ${response.status}: ${responseJson.message}`)
+            );
+          }
+        } catch (e) {
+          console.log(e)
         }
-      };
-      xhr.onerror = () => {
-        // This is raised for both network-level and CORS (authentication)
-        // problems. Since there is, by design for security reasons, no way
-        // to programmatically distinguish the two (the error instance
-        // passed to this handler has *no* useful information), we should
-        // prompt the user for whether to retry or re-authenticate against
-        // DigitalOcean (this isn't so bad because application-level
-        // errors, e.g. bad request parameters and even 404s, do *not* raise
-        // an onerror event).
-        console.error('Failed to perform DigitalOcean request');
-        reject(new XhrError());
-      };
-      xhr.send(data ? JSON.stringify(data) : undefined);
     });
   }
 }
